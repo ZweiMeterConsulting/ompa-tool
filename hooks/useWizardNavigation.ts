@@ -22,6 +22,7 @@ export function useWizardNavigation(variant?: OmpaVariantConfig, initialCouponCo
   }, [variant, initialCouponCode]);
 
   const [state, setState] = useState<WizardState>({
+    variantId: variant?.id ?? "light",
     currentStepId: steps[0].id,
     visitedSteps: [steps[0].id],
     answers: {},

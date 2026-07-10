@@ -10,10 +10,9 @@ import {
   getProfileBalance,
 } from "../../utils/calcResults";
 import RadarChart from "../RadarChart";
-import { useVariant } from "../../context/VariantContext";
 import { getBenchmarkForBranch } from "../../config/ompaBenchmarks";
 import { UpsellSection } from "./UpsellSection";
-import { OMPA_VARIANTS } from "../../config/ompaVariants";
+import { getVariantConfig } from "../../config/ompaVariants";
 
 // ── Hilfsfunktionen ──
 
@@ -62,13 +61,12 @@ export default function ResultSummary({
 }: ResultSummaryProps) {
   const [isExportingPdf, setIsExportingPdf] = useState(false);
 
-  // Varianten-Konfiguration aus Context (Fallback: Light)
-  let variant = OMPA_VARIANTS.light;
-  try {
-    variant = useVariant();
-  } catch {
-    // Kein VariantProvider → Fallback auf Light
-  }
+  // Varianten-Konfiguration direkt aus dem Wizard-State ableiten.
+  // Wichtig: Der PDF-Export rendert diese Komponente über /ompa-report
+  // OHNE VariantProvider – deshalb darf die Variante nicht aus dem
+  // React-Context kommen (der sonst immer auf "light" zurückfällt),
+  // sondern muss aus dem mitserialisierten State stammen.
+  const variant = getVariantConfig(wizardState.variantId);
   const report = variant.report;
 
   // ── Block-Ergebnisse berechnen ──
@@ -82,10 +80,13 @@ export default function ResultSummary({
     };
   });
 
-  // Handlungsbedarf pro Block
+  // Handlungsbedarf pro Block.
+  // calculateBlockScore liefert `percent` bereits als Handlungsbedarf
+  // (0 = kein Bedarf … 100 = maximaler Bedarf), NICHT als Reifegrad.
+  // Deshalb wird der Wert direkt übernommen und nicht (wie früher)
+  // fälschlich noch einmal invertiert.
   const radarData = blockResults.map((b, idx) => {
-    const maturity = (b as any).percent ?? 0;
-    const need = Math.max(0, 100 - maturity);
+    const need = Math.max(0, Math.min(100, (b as any).percent ?? 0));
     return {
       subject: `${idx + 1}. ${b.title}`,
       need,
@@ -594,13 +595,13 @@ export default function ResultSummary({
                   </div>
                   <div className="flex-1">
                     <div className="text-sm font-semibold text-gray-100">
-                      Frage {item.questionNumber}: {item.questionText}
+                      Frage {item.nr}: {item.text}
                     </div>
                     <div className="text-xs text-gray-400">Block: {item.blockTitle}</div>
                   </div>
                 </div>
                 <div className="text-sm font-bold text-[#ffbb3b]">
-                  Handlungsbedarf {item.needScore}
+                  Handlungsbedarf {item.score}
                 </div>
               </div>
             ))}

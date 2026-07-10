@@ -1,5 +1,7 @@
 // types/wizard.ts
 
+import type { OmpaVariantId } from "./variant";
+
 /**
  * Alle möglichen Schritt-IDs im Wizard.
  *
@@ -78,6 +80,10 @@ export type BranchId =
  * Zentraler Zustand des Wizards.
  */
 export interface WizardState {
+  /** Aktive OMPA-Variante – wird mitserialisiert, damit auch der
+   *  PDF-Export (ohne VariantProvider) die richtige Variante kennt. */
+  variantId: OmpaVariantId;
+
   currentStepId: WizardStepId;
   visitedSteps: WizardStepId[];
 
