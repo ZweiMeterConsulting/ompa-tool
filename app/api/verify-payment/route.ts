@@ -23,7 +23,13 @@ export async function POST(request: NextRequest) {
     }
 
     // ─── Entwicklungsmodus: Simulation akzeptieren ───
-    if (sessionId.startsWith("dev_simulated_")) {
+    // create-checkout erzeugt Session-IDs mit Präfix "dev_sim_"; hier
+    // müssen exakt dieselben Präfixe akzeptiert werden. Zusätzlich werden
+    // per 100%-Coupon freigeschaltete Reports ("coupon_free_...") anerkannt.
+    if (
+      sessionId.startsWith("dev_sim_") ||
+      sessionId.startsWith("coupon_free_")
+    ) {
       console.log("[STRIPE] Entwicklungsmodus: Simulierte Zahlung akzeptiert.");
       return new Response(
         JSON.stringify({ verified: true, mode: "simulated" }),
