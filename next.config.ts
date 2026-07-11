@@ -3,6 +3,9 @@ import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 
 const nextConfig: NextConfig = {
+  // Schlanker Standalone-Server für den Docker-/Coolify-Build:
+  // .next/standalone enthält server.js + nur die wirklich genutzten Deps.
+  output: "standalone",
   turbopack: {
     root: dirname(fileURLToPath(import.meta.url)),
   },

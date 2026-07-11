@@ -88,8 +88,23 @@ export async function POST(request: NextRequest) {
     console.log("[OMPA-PDF] executablePath:", executablePath);
 
     // 5) Puppeteer starten
+    //
+    //    Auf Vercel: die Lambda-optimierten Flags von @sparticuz/chromium.
+    //    Auf einem echten Chromium (Coolify-Container / lokal installiert):
+    //    ein schlanker, container-tauglicher Flag-Satz. --disable-dev-shm-usage
+    //    ist in Docker wichtig, weil /dev/shm dort standardmäßig zu klein ist
+    //    und Chromium sonst beim Rendern abstürzt.
+    const launchArgs = isVercel
+      ? chromium.args
+      : [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-gpu",
+        ];
+
     browser = await puppeteer.launch({
-      args: chromium.args,
+      args: launchArgs,
       executablePath,
       headless: true,
     });

@@ -1,0 +1,17 @@
+# Build-Kontext schlank halten – wird NICHT ins Image kopiert.
+node_modules
+.next
+out
+build
+.git
+.gitignore
+*.pdf
+.env*
+.vercel
+npm-debug.log*
+Dockerfile
+.dockerignore
+README.md
+*.md
+coverage
+.DS_Store
