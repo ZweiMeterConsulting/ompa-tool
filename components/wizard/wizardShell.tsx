@@ -8,13 +8,19 @@ import { WizardStepRenderer } from "./WizardStepRenderer";
 import { WizardFooterNav } from "./WizardFooterNav";
 import { WizardProgressBar } from "./WizardProgressBar";
 import type { OmpaVariantConfig } from "../../types/variant";
+import type { WizardState } from "../../types/wizard";
 
 interface WizardShellProps {
   variant?: OmpaVariantConfig;
   initialCouponCode?: string | null;
+  initialState?: WizardState | null;
 }
 
-export function WizardShell({ variant, initialCouponCode }: WizardShellProps) {
+export function WizardShell({
+  variant,
+  initialCouponCode,
+  initialState,
+}: WizardShellProps) {
   const {
     state,
     steps,
@@ -30,7 +36,7 @@ export function WizardShell({ variant, initialCouponCode }: WizardShellProps) {
     setStripeSession,
     completeGate,
     setCoupon,
-  } = useWizardNavigation(variant, initialCouponCode);
+  } = useWizardNavigation(variant, initialCouponCode, initialState);
 
   // Varianten-Label für Header
   const variantLabel = variant?.label ?? "OMPA 2.0";

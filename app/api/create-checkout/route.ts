@@ -1,30 +1,32 @@
 // app/api/create-checkout/route.ts
 
 import type { NextRequest } from "next/server";
+import type Stripe from "stripe";
+import { getStripe, getPriceIdForVariant } from "@/lib/stripe";
 
 export const runtime = "nodejs";
 
 /**
  * POST /api/create-checkout
  *
- * Erstellt eine Stripe Checkout Session für OMPA Light, Medium oder Heavy.
+ * Erstellt eine Stripe Checkout Session für OMPA Medium oder Heavy
+ * (Light ist im Standard-Flow kostenlos via E-Mail-Gate).
  *
  * Erwartet im Body:
  * - variantId: "light" | "medium" | "heavy"
- * - couponCode: string | null (Coupon-Code für Rabatt)
+ * - couponCode: string | null (interner Coupon-Code)
  * - stripeCouponId: string | null (Stripe-Coupon-ID)
  *
  * Umgebungsvariablen:
  * - STRIPE_SECRET_KEY
- * - STRIPE_PRICE_ID_LIGHT   (29,95 €)
- * - STRIPE_PRICE_ID_MEDIUM  (149,95 €)
- * - STRIPE_PRICE_ID_HEAVY   (499,95 €)
+ * - STRIPE_PRICE_ID_LIGHT   (optional)
+ * - STRIPE_PRICE_ID_MEDIUM
+ * - STRIPE_PRICE_ID_HEAVY
  *
- * Stripe-Dashboard Coupons (IDs müssen exakt übereinstimmen):
- * - OMPA_FREE       → 100 % Rabatt (alle Varianten)
- * - OMPA_LIGHT_50   → 50 %  Rabatt (Light)
- * - OMPA_30         → 30 %  Rabatt (Medium, Heavy)
- * - OMPA_66         → 66 %  Rabatt (Medium, Heavy)
+ * Steuer: Stripe Tax (automatic_tax) ist aktiviert. Die Preise sind als
+ * netto (tax_behavior=exclusive) angelegt; Stripe rechnet die USt. je nach
+ * Kundenland auf und weist sie separat aus. Dafür wird die Rechnungsadresse
+ * im Checkout erhoben.
  */
 
 interface CheckoutRequestBody {
@@ -33,94 +35,100 @@ interface CheckoutRequestBody {
   stripeCouponId?: string | null;
 }
 
+function json(payload: unknown, status: number) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/**
+ * Baut die öffentliche Origin robust hinter dem Reverse-Proxy (Coolify/Traefik)
+ * zusammen: `x-forwarded-proto` + `host` schlagen `request.url` (interne URL).
+ */
+function publicOrigin(request: NextRequest): string {
+  const explicit = process.env.NEXT_PUBLIC_BASE_URL;
+  if (explicit) return explicit.replace(/\/$/, "");
+
+  const host = request.headers.get("host");
+  const proto = request.headers.get("x-forwarded-proto") ?? "https";
+  if (host) return `${proto}://${host}`;
+
+  return new URL(request.url).origin;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body: CheckoutRequestBody = await request.json();
     const { variantId, couponCode, stripeCouponId } = body;
 
-    const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
+    const stripe = getStripe();
 
-    if (!stripeSecretKey) {
+    // ─── Stripe nicht konfiguriert ───
+    if (!stripe) {
       console.warn("[STRIPE] STRIPE_SECRET_KEY nicht gesetzt.");
 
-      // ─── Entwicklungsmodus: Stripe simulieren ───
+      // Lokaler Entwicklungsmodus: Checkout simulieren, damit der Flow ohne
+      // Keys durchgetestet werden kann.
       if (process.env.NODE_ENV === "development") {
         console.log(
           `[STRIPE-DEV] Simuliert: ${variantId}` +
             (couponCode ? ` + Coupon "${couponCode}"` : "")
         );
-        const origin = new URL(request.url).origin;
-        return new Response(
-          JSON.stringify({
+        const origin = publicOrigin(request);
+        return json(
+          {
             url: `${origin}/wizard?variant=${variantId}&payment=success&session_id=dev_sim_${Date.now()}`,
             sessionId: `dev_sim_${Date.now()}`,
             mode: "simulated",
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } }
+          },
+          200
         );
       }
 
-      return new Response(
-        JSON.stringify({ error: "Bezahlung ist aktuell nicht verfügbar." }),
-        { status: 503, headers: { "Content-Type": "application/json" } }
+      return json({ error: "Bezahlung ist aktuell nicht verfügbar." }, 503);
+    }
+
+    // ─── Preis-ID auflösen ───
+    const priceId = getPriceIdForVariant(variantId);
+    if (!priceId) {
+      console.error(`[STRIPE] Preis-ID für "${variantId}" nicht konfiguriert.`);
+      return json(
+        { error: `Preis-ID für "${variantId}" ist nicht konfiguriert.` },
+        500
       );
     }
 
-    // ─── Stripe Checkout Session erstellen ───
-    //
-    // Aktivieren, sobald `npm install stripe` ausgeführt wurde:
-    //
-    // import Stripe from "stripe";
-    // const stripe = new Stripe(stripeSecretKey);
-    //
-    // const priceIdMap: Record<string, string | undefined> = {
-    //   light: process.env.STRIPE_PRICE_ID_LIGHT,
-    //   medium: process.env.STRIPE_PRICE_ID_MEDIUM,
-    //   heavy: process.env.STRIPE_PRICE_ID_HEAVY,
-    // };
-    //
-    // const priceId = priceIdMap[variantId];
-    // if (!priceId) {
-    //   return new Response(
-    //     JSON.stringify({ error: `Preis-ID für "${variantId}" nicht konfiguriert.` }),
-    //     { status: 500, headers: { "Content-Type": "application/json" } }
-    //   );
-    // }
-    //
-    // const origin = new URL(request.url).origin;
-    //
-    // const sessionParams: Stripe.Checkout.SessionCreateParams = {
-    //   payment_method_types: ["card", "sepa_debit"],
-    //   line_items: [{ price: priceId, quantity: 1 }],
-    //   mode: "payment",
-    //   success_url: `${origin}/wizard?variant=${variantId}&payment=success&session_id={CHECKOUT_SESSION_ID}`,
-    //   cancel_url: `${origin}/wizard?variant=${variantId}&payment=cancelled`,
-    //   locale: "de",
-    //   metadata: {
-    //     ompa_variant: variantId,
-    //     coupon_code: couponCode ?? "",
-    //   },
-    //   ...(stripeCouponId
-    //     ? { discounts: [{ coupon: stripeCouponId }] }
-    //     : { allow_promotion_codes: true }),
-    // };
-    //
-    // const session = await stripe.checkout.sessions.create(sessionParams);
-    //
-    // return new Response(
-    //   JSON.stringify({ url: session.url, sessionId: session.id }),
-    //   { status: 200, headers: { "Content-Type": "application/json" } }
-    // );
+    const origin = publicOrigin(request);
 
-    return new Response(
-      JSON.stringify({ error: "Stripe-Integration wird eingerichtet." }),
-      { status: 501, headers: { "Content-Type": "application/json" } }
-    );
+    const sessionParams: Stripe.Checkout.SessionCreateParams = {
+      mode: "payment",
+      line_items: [{ price: priceId, quantity: 1 }],
+      // Stripe Tax: USt. automatisch berechnen und ausweisen
+      automatic_tax: { enabled: true },
+      // Für automatic_tax wird eine Rechnungsadresse benötigt
+      billing_address_collection: "required",
+      success_url: `${origin}/wizard?variant=${variantId}&payment=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${origin}/wizard?variant=${variantId}&payment=cancelled`,
+      locale: "de",
+      metadata: {
+        ompa_variant: variantId,
+        coupon_code: couponCode ?? "",
+      },
+      // Entweder ein fest übergebener Coupon ODER manuelle Promo-Code-Eingabe,
+      // beides zugleich lehnt Stripe ab.
+      ...(stripeCouponId
+        ? { discounts: [{ coupon: stripeCouponId }] }
+        : { allow_promotion_codes: true }),
+    };
+
+    const session = await stripe.checkout.sessions.create(sessionParams);
+
+    return json({ url: session.url, sessionId: session.id }, 200);
   } catch (error) {
-    console.error("[STRIPE] Checkout-Fehler:", error);
-    return new Response(
-      JSON.stringify({ error: "Fehler beim Erstellen der Checkout-Session." }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
+    const message =
+      error instanceof Error ? error.message : "Unbekannter Fehler.";
+    console.error("[STRIPE] Checkout-Fehler:", message);
+    return json({ error: "Fehler beim Erstellen der Checkout-Session." }, 500);
   }
 }

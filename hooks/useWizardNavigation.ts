@@ -14,25 +14,31 @@ import type { OmpaVariantConfig } from "../types/variant";
  * auf Basis der Varianten-Konfiguration gebaut. Ohne Variante
  * wird der statische Fallback (OMPA_WIZARD_STEPS) verwendet.
  */
-export function useWizardNavigation(variant?: OmpaVariantConfig, initialCouponCode?: string | null) {
+export function useWizardNavigation(
+  variant?: OmpaVariantConfig,
+  initialCouponCode?: string | null,
+  initialState?: WizardState | null
+) {
   // Steps berechnen: dynamisch oder statischer Fallback
   const steps = useMemo(() => {
     if (variant) return buildWizardSteps(variant, initialCouponCode);
     return OMPA_WIZARD_STEPS;
   }, [variant, initialCouponCode]);
 
-  const [state, setState] = useState<WizardState>({
-    variantId: variant?.id ?? "light",
-    currentStepId: steps[0].id,
-    visitedSteps: [steps[0].id],
-    answers: {},
-    priorities: {},
-    selectedBranch: null,
-    leadData: null,
-    stripeSessionId: null,
-    gateCompleted: false,
-    couponCode: initialCouponCode ?? null,
-  });
+  const [state, setState] = useState<WizardState>(
+    initialState ?? {
+      variantId: variant?.id ?? "light",
+      currentStepId: steps[0].id,
+      visitedSteps: [steps[0].id],
+      answers: {},
+      priorities: {},
+      selectedBranch: null,
+      leadData: null,
+      stripeSessionId: null,
+      gateCompleted: false,
+      couponCode: initialCouponCode ?? null,
+    }
+  );
 
   const currentIndex = steps.findIndex(
     (s) => s.id === state.currentStepId

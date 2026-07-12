@@ -1,80 +1,71 @@
 // app/api/verify-payment/route.ts
 
 import type { NextRequest } from "next/server";
+import { getStripe } from "@/lib/stripe";
 
 export const runtime = "nodejs";
 
 /**
  * POST /api/verify-payment
  *
- * Verifiziert eine Stripe Checkout Session nach dem Redirect.
- * Wird vom Wizard aufgerufen, wenn ?payment=success&session_id=... in der URL steht.
+ * Verifiziert eine Stripe Checkout Session nach dem Redirect zurück in den
+ * Wizard (?payment=success&session_id=...). Gibt nur dann `verified: true`
+ * zurück, wenn die Session tatsächlich bezahlt ist.
  */
+
+function json(payload: unknown, status: number) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { sessionId } = body as { sessionId: string };
+    const { sessionId } = (await request.json()) as { sessionId?: string };
 
     if (!sessionId) {
-      return new Response(
-        JSON.stringify({ error: "Keine Session-ID übergeben." }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
-      );
+      return json({ error: "Keine Session-ID übergeben." }, 400);
     }
 
-    // ─── Entwicklungsmodus: Simulation akzeptieren ───
-    // create-checkout erzeugt Session-IDs mit Präfix "dev_sim_"; hier
-    // müssen exakt dieselben Präfixe akzeptiert werden. Zusätzlich werden
-    // per 100%-Coupon freigeschaltete Reports ("coupon_free_...") anerkannt.
+    // ─── Simulierte / kostenlose Freischaltungen ───
+    // create-checkout erzeugt im Dev-Modus "dev_sim_"-IDs; 100%-Coupons
+    // schalten ohne Stripe frei ("coupon_free_..."). Beide gelten als gültig.
     if (
       sessionId.startsWith("dev_sim_") ||
       sessionId.startsWith("coupon_free_")
     ) {
-      console.log("[STRIPE] Entwicklungsmodus: Simulierte Zahlung akzeptiert.");
-      return new Response(
-        JSON.stringify({ verified: true, mode: "simulated" }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
+      console.log("[STRIPE] Simulierte/kostenlose Zahlung akzeptiert.");
+      return json({ verified: true, mode: "simulated" }, 200);
+    }
+
+    // ─── Produktion: echte Stripe-Session prüfen ───
+    const stripe = getStripe();
+    if (!stripe) {
+      return json({ error: "Stripe ist nicht konfiguriert." }, 503);
+    }
+
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    if (session.payment_status === "paid") {
+      return json(
+        {
+          verified: true,
+          customerEmail: session.customer_details?.email ?? null,
+          variant: session.metadata?.ompa_variant ?? null,
+        },
+        200
       );
     }
 
-    // ─── Produktion: Stripe-Session verifizieren ───
-    //
-    // const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
-    // if (!stripeSecretKey) {
-    //   return new Response(
-    //     JSON.stringify({ error: "Stripe nicht konfiguriert." }),
-    //     { status: 503 }
-    //   );
-    // }
-    //
-    // import Stripe from "stripe";
-    // const stripe = new Stripe(stripeSecretKey);
-    // const session = await stripe.checkout.sessions.retrieve(sessionId);
-    //
-    // if (session.payment_status === "paid") {
-    //   return new Response(
-    //     JSON.stringify({
-    //       verified: true,
-    //       customerEmail: session.customer_details?.email,
-    //     }),
-    //     { status: 200, headers: { "Content-Type": "application/json" } }
-    //   );
-    // }
-    //
-    // return new Response(
-    //   JSON.stringify({ verified: false, reason: "Zahlung nicht abgeschlossen." }),
-    //   { status: 402, headers: { "Content-Type": "application/json" } }
-    // );
-
-    return new Response(
-      JSON.stringify({ error: "Stripe-Verifizierung noch nicht aktiv." }),
-      { status: 501, headers: { "Content-Type": "application/json" } }
+    return json(
+      { verified: false, reason: "Zahlung nicht abgeschlossen." },
+      402
     );
   } catch (error) {
-    console.error("[STRIPE] Verifizierungsfehler:", error);
-    return new Response(
-      JSON.stringify({ error: "Fehler bei der Zahlungsverifizierung." }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
+    const message =
+      error instanceof Error ? error.message : "Unbekannter Fehler.";
+    console.error("[STRIPE] Verifizierungsfehler:", message);
+    return json({ error: "Fehler bei der Zahlungsverifizierung." }, 500);
   }
 }
