@@ -61,6 +61,13 @@ export default function ResultSummary({
 }: ResultSummaryProps) {
   const [isExportingPdf, setIsExportingPdf] = useState(false);
 
+  // ── E-Mail-Versand des Reports ──
+  const knownEmail = wizardState.leadData?.email ?? "";
+  const [emailStatus, setEmailStatus] = useState<
+    "idle" | "input" | "sending" | "sent" | "error"
+  >("idle");
+  const [manualEmail, setManualEmail] = useState("");
+
   // Varianten-Konfiguration direkt aus dem Wizard-State ableiten.
   // Wichtig: Der PDF-Export rendert diese Komponente über /ompa-report
   // OHNE VariantProvider – deshalb darf die Variante nicht aus dem
@@ -192,6 +199,38 @@ export default function ResultSummary({
     }
   }
 
+  // ── Report per E-Mail verschicken ──
+  async function sendReportByEmail() {
+    // Ohne bekannte Adresse (Medium/Heavy ohne E-Mail-Gate) erst Eingabe zeigen
+    const targetEmail = (knownEmail || manualEmail).trim();
+    if (!targetEmail) {
+      setEmailStatus("input");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(targetEmail)) {
+      setEmailStatus("input");
+      return;
+    }
+
+    try {
+      setEmailStatus("sending");
+      const res = await fetch("/api/ompa-send-report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state: wizardState, email: targetEmail }),
+      });
+      if (!res.ok) {
+        console.error("Report-Versand fehlgeschlagen", await res.text());
+        setEmailStatus("error");
+        return;
+      }
+      setEmailStatus("sent");
+    } catch (error) {
+      console.error("Report-Versand fehlgeschlagen", error);
+      setEmailStatus("error");
+    }
+  }
+
   // ────────────────────────────────────────────────────────
   // RENDER
   // ────────────────────────────────────────────────────────
@@ -232,25 +271,73 @@ export default function ResultSummary({
 
           {/* Export-Buttons (nicht im PDF) */}
           {!pdfMode && (
-            <div className="flex flex-wrap gap-3 justify-end print:hidden">
-              {report.pdfExport && (
-                <button
-                  type="button"
-                  onClick={exportPdf}
-                  disabled={isExportingPdf}
-                  className="inline-flex items-center gap-2 rounded-full bg-slate-900/70 border border-slate-600 px-4 py-2 text-xs font-semibold text-gray-100 hover:bg-slate-800 transition disabled:opacity-50"
-                >
-                  {isExportingPdf ? "PDF wird erstellt…" : "PDF-Report herunterladen"}
-                </button>
+            <div className="flex flex-col items-end gap-2 print:hidden">
+              <div className="flex flex-wrap gap-3 justify-end">
+                {report.pdfExport && (
+                  <button
+                    type="button"
+                    onClick={exportPdf}
+                    disabled={isExportingPdf}
+                    className="inline-flex items-center gap-2 rounded-full bg-slate-900/70 border border-slate-600 px-4 py-2 text-xs font-semibold text-gray-100 hover:bg-slate-800 transition disabled:opacity-50"
+                  >
+                    {isExportingPdf ? "PDF wird erstellt…" : "PDF-Report herunterladen"}
+                  </button>
+                )}
+                {report.pdfExport && (
+                  <button
+                    type="button"
+                    onClick={sendReportByEmail}
+                    disabled={emailStatus === "sending" || emailStatus === "sent"}
+                    className="inline-flex items-center gap-2 rounded-full bg-slate-900/70 border border-slate-600 px-4 py-2 text-xs font-semibold text-gray-100 hover:bg-slate-800 transition disabled:opacity-50"
+                  >
+                    {emailStatus === "sending"
+                      ? "Wird verschickt…"
+                      : emailStatus === "sent"
+                      ? "✓ Per E-Mail verschickt"
+                      : "Report per E-Mail erhalten"}
+                  </button>
+                )}
+                {report.csvExport && (
+                  <button
+                    type="button"
+                    onClick={exportNeedCsv}
+                    className="inline-flex items-center gap-2 rounded-full bg-slate-900/70 border border-slate-600 px-4 py-2 text-xs font-semibold text-gray-100 hover:bg-slate-800 transition"
+                  >
+                    CSV-Export
+                  </button>
+                )}
+              </div>
+
+              {/* E-Mail-Eingabe, wenn keine Adresse aus dem Gate bekannt ist */}
+              {emailStatus === "input" && (
+                <div className="flex flex-wrap gap-2 justify-end">
+                  <input
+                    type="email"
+                    value={manualEmail}
+                    onChange={(e) => setManualEmail(e.target.value)}
+                    placeholder="deine@email.de"
+                    className="rounded-full border border-slate-600 bg-slate-900/70 px-4 py-2 text-xs text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-[#fbb03b]/50"
+                  />
+                  <button
+                    type="button"
+                    onClick={sendReportByEmail}
+                    className="inline-flex items-center gap-2 rounded-full bg-[#fbb03b] px-4 py-2 text-xs font-bold text-black hover:bg-[#fdd28a] transition"
+                  >
+                    Senden
+                  </button>
+                </div>
               )}
-              {report.csvExport && (
-                <button
-                  type="button"
-                  onClick={exportNeedCsv}
-                  className="inline-flex items-center gap-2 rounded-full bg-slate-900/70 border border-slate-600 px-4 py-2 text-xs font-semibold text-gray-100 hover:bg-slate-800 transition"
-                >
-                  CSV-Export
-                </button>
+
+              {emailStatus === "sent" && (
+                <p className="text-xs text-emerald-300">
+                  Dein Report ist unterwegs an {(knownEmail || manualEmail).trim()}.
+                </p>
+              )}
+              {emailStatus === "error" && (
+                <p className="text-xs text-red-400">
+                  Versand fehlgeschlagen – bitte versuch es später erneut oder
+                  nutze den Download.
+                </p>
               )}
             </div>
           )}
